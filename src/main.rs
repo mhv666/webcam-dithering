@@ -5,6 +5,7 @@ use opencv::{
     imgproc,
 };
 
+use rayon::prelude::*;
 use std::net::TcpListener;
 use std::io::Write;
 
@@ -12,20 +13,22 @@ fn bayer_dithering(frame: &Mat, bayer_matrix: &[u8; 16]) -> Mat {
     let mut dithered_frame = Mat::default();
     frame.copy_to(&mut dithered_frame).unwrap();
 
-    let rows = dithered_frame.rows();
     let cols = dithered_frame.cols();
 
-    for i in 0..rows {
-        for j in 0..cols {
-            let pixel = dithered_frame.at_2d::<u8>(i, j).unwrap();
-            let bayer_value = bayer_matrix[((i % 4) * 4 + (j % 4)) as usize];
+    let scaled_bayer_matrix: [u8; 16] = bayer_matrix.map(|v| (v as f32 / 16.0 * 255.0) as u8);
 
-            let scaled_bayer_value = (bayer_value as f32 / 16.0 * 255.0) as u8;
+    let data = dithered_frame.data_bytes_mut().unwrap();
 
-            let new_pixel = if *pixel > scaled_bayer_value { 255 } else { 0 };
-            *dithered_frame.at_2d_mut::<u8>(i, j).unwrap() = new_pixel;
-        }
-    }
+    data.par_chunks_mut(cols as usize)
+        .enumerate()
+        .for_each(|(i, row)| {
+            for j in 0..cols {
+                let pixel = row[j as usize];
+                let index = ((i % 4) as usize) * 4 + ((j % 4) as usize);
+                let bayer_value = scaled_bayer_matrix[index];
+                row[j as usize] = if pixel > bayer_value { 255 } else { 0 };
+            }
+        });
 
     dithered_frame
 }
